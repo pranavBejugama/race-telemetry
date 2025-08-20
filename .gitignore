@@ -1,0 +1,52 @@
+# ======================
+# Global
+# ======================
+*.log
+*.env
+*.env.local
+*.DS_Store
+__pycache__/
+.vscode/
+.idea/
+*.pyc
+scripts
+venv
+
+# ======================
+# Frontend (React + Vite)
+# ======================
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.parcel-cache/
+frontend/.eslintcache
+
+# Optional: local editor/OS files
+frontend/.DS_Store
+
+# ======================
+# Backend (FastAPI / Python)
+# ======================
+backend/__pycache__/
+backend/.pytest_cache/
+backend/.mypy_cache/
+backend/.ruff_cache/
+backend/.coverage
+backend/htmlcov/
+backend/*.db
+backend/*.sqlite3
+
+# Virtual environment
+backend/venv/
+backend/.venv/
+backend/env/
+backend/.env/
+
+# ======================
+# Python build & packaging
+# ======================
+*.egg-info/
+.eggs/
+*.egg
+build/
+dist/
