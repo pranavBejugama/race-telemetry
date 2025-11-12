@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Play, Pause, Wifi, WifiOff, TrendingUp, Zap, Thermometer, FileImage, FileText } from "lucide-react"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts"
+import { max } from "date-fns"
 
 interface TelemetryPoint {
   t: number // timestamp in seconds
@@ -433,15 +434,27 @@ console.log('[PAGE] telemetry.data.length:', telemetry.data.length);
   }, [connectWebSocket])
 
   const chartData = useMemo(() => {
-  console.log('[CHARTDATA] Recalculating, telemetry.data.length:', telemetry.data.length);
-  return telemetry.data;  // Just return all data, no filtering
-}, [telemetry.data]);
+  console.log('[CHARTDATA] Recalculating, data:', telemetry.data.length, 'domain:', chartDomain);
+  
+  if (telemetry.data.length === 0) return [];
+  
+  // If no domain set, return all data
+  if (!chartDomain || isNaN(chartDomain.xMin) || isNaN(chartDomain.xMax)) {
+    return telemetry.data;
+  }
+  
+  // Filter to visible range
+  return telemetry.data.filter(d => d.t >= chartDomain.xMin && d.t <= chartDomain.xMax);
+}, [telemetry.data, chartDomain]);
 
   // Initialize chart domain when data first arrives
 useEffect(() => {
-  if (telemetry.data.length > 0 && !chartDomain) {
+  if (telemetry.data.length > 0) {
     const minT = Math.min(...telemetry.data.map((d) => d.t))
     const maxT = Math.max(...telemetry.data.map((d) => d.t))
+
+    console.log('[INIT DOMAIN] minT:', minT, 'maxT:', maxT);
+
     setChartDomain({
       xMin: followTail ? Math.max(0, maxT - 30) : minT,
       xMax: maxT,
@@ -449,28 +462,88 @@ useEffect(() => {
       yMax: 100,
     })
   }
-}, [telemetry.data, chartDomain, followTail])
+}, [telemetry.data.length])
 
 
   const handleWheel = useCallback(
     (e: React.WheelEvent) => {
-      if (!chartDomain || data.length === 0) return
 
-      e.preventDefault()
+      if (telemetry.playing) {
+      console.log('[WHEEL] Cannot zoom while playing');
+      return;
+    }
+
+      if (!chartDomain || telemetry.data.length === 0) {
+        console.log('[WHEEL] EARLY RETURN - no domain or no data');
+      return;
+      }
+
+      //e.preventDefault()
       setFollowTail(false)
 
       const rect = chartContainerRef.current?.getBoundingClientRect()
-      if (!rect) return
+      if (!rect) { console.log('[WHEEL] EARLY RETURN - no rect');
+      return;
+    }
+
+      const minT = Math.min(...telemetry.data.map((d) => d.t))
+      const maxT = Math.max(...telemetry.data.map((d) => d.t))
+      const totalDataSpan = maxT - minT
+
+      console.log('[WHEEL] minT:', minT, 'maxT:', maxT, 'span:', totalDataSpan);
+
+      const MIN_ZOOM_SPAN = 2;
+      const MAX_ZOOM_SPAN = totalDataSpan * 1.2;
 
       const mouseX = (e.clientX - rect.left) / rect.width
       const currentSpan = chartDomain.xMax - chartDomain.xMin
       const zoomFactor = e.deltaY > 0 ? 1 + ZOOM_SENSITIVITY : 1 - ZOOM_SENSITIVITY
 
-      const newSpan = Math.max(MIN_ZOOM_SPAN, currentSpan * zoomFactor)
-      const mouseT = chartDomain.xMin + mouseX * currentSpan
+       console.log('[WHEEL] currentSpan:', currentSpan, 'zoomFactor:', zoomFactor);
 
-      const newXMin = mouseT - (mouseT - chartDomain.xMin) * (newSpan / currentSpan)
-      const newXMax = newXMin + newSpan
+      let newSpan = currentSpan * zoomFactor
+      newSpan = Math.max(MIN_ZOOM_SPAN, Math.min(MAX_ZOOM_SPAN, newSpan))
+
+      console.log('[WHEEL] newSpan:', newSpan);
+
+
+      const mouseT = chartDomain.xMin + mouseX * currentSpan
+      let newXMin = mouseT - (mouseT - chartDomain.xMin) * (newSpan / currentSpan)
+      let newXMax = newXMin + newSpan
+
+      console.log('[WHEEL] BEFORE CLAMP - newXMin:', newXMin, 'newXMax:', newXMax);
+
+      if (newXMin < minT){
+        newXMin = minT
+        newXMax = newXMin + newSpan
+
+      }
+      if (newXMax > maxT){
+        newXMax = maxT
+        newXMin = newXMax - newSpan
+
+      }
+
+      if (newXMin < minT || newXMax > maxT) {
+  const center = (minT + maxT) / 2;
+  newXMin = center - newSpan / 2;
+  newXMax = center + newSpan / 2;
+  
+  // If span is too large for data, just show all data
+  if (newXMin < minT) {
+    newXMin = minT;
+    newXMax = maxT;
+  }
+}
+
+// Safety check: ensure valid range
+if (newXMin >= newXMax || isNaN(newXMin) || isNaN(newXMax)) {
+  console.log('[WHEEL] Invalid range, skipping update');
+  return;
+}
+
+      console.log('[WHEEL] AFTER CLAMP - newXMin:', newXMin, 'newXMax:', newXMax);
+      console.log('[WHEEL] Setting new domain!');
 
       setChartDomain({
         ...chartDomain,
@@ -478,8 +551,26 @@ useEffect(() => {
         xMax: newXMax,
       })
     },
-    [chartDomain, data.length],
+    [chartDomain, telemetry.data, telemetry],
   )
+  /**What happens:**
+- State updates with new boundaries
+- Chart re-renders with new visible range
+- Lines redraw to show the zoomed view
+
+---
+
+## 🎯 Visual Summary
+```
+Before zoom (showing 5 seconds):
+|----+----+----+----+----|
+3s   4s   5s   6s   7s   8s
+          ↑ mouse
+
+After zoom IN (showing 4 seconds):
+     |----+----+----+----|
+     3.5s 4.5s 5.5s 6.5s 7.5s
+               ↑ mouse (still here!) */
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -531,7 +622,7 @@ useEffect(() => {
       yMax: 100,
     })
     setFollowTail(true)
-  }, [data])
+  }, [telemetry.data, telemetry])
 
   const toggleSeries = useCallback((series: keyof SeriesVisibility) => {
     setSeriesVisibility((prev) => ({
@@ -629,8 +720,20 @@ useEffect(() => {
   }
 
   const toggleFollowTail = () => {
-    setFollowTail(!followTail)
-  }
+    const newValue = !followTail;
+    setFollowTail(newValue);
+
+    if (newValue && telemetry.data.length > 0) {
+      const minT = Math.min(...telemetry.data.map((d) => d.t));
+      const maxT = Math.max(...telemetry.data.map((d) => d.t));
+      setChartDomain({
+        xMin: Math.max(minT, maxT - 30),
+        xMax: maxT,
+        yMin: 0,
+        yMax: 25,
+      });
+    }
+  };
 
   const memoizedKpiData = useMemo((): KPIData => {
     if (chartData.length === 0) {
@@ -910,7 +1013,7 @@ useEffect(() => {
             <div
               ref={chartContainerRef}
               className="h-80 cursor-crosshair select-none"
-              onWheel={handleWheel}
+              onWheelCapture={handleWheel}
               onMouseDown={handleMouseDown}
               onMouseMove={handleMouseMove}
               onMouseUp={handleMouseUp}
@@ -925,7 +1028,7 @@ useEffect(() => {
                     dataKey="t"
                     type="number"
                     scale="linear"
-                    domain={["auto", "auto"]}
+                    domain={chartDomain ? [chartDomain.xMin, chartDomain.xMax] : ["auto", "auto"]}
                     stroke="hsl(var(--muted-foreground))"
                     fontSize={12}
                     tickFormatter={(value) => `${value.toFixed(1)}s`}
