@@ -32,7 +32,7 @@ interface ChartDomain {
   yMax: number
 }
 
-interface SeriesVisibility {
+interface series {
   speed: boolean
   current: boolean
   temp: boolean
@@ -166,10 +166,13 @@ function downsampleMinMax(data: TelemetryPoint[], targetPoints: number): Telemet
 }
 
 export default function TelemetryDashboard() {
-  const telemetry = useTelemetry(4);
-  const data = telemetry.data;
+  const {
+  playing, followTail, series, data, hz,
+  setFollowTail, setHz,
+  play, pause, toggleSeries, pushPoint, clear,
+} = useTelemetry(4);
 
-console.log('[PAGE] telemetry.data.length:', telemetry.data.length);
+console.log('[PAGE] data.length:', data.length);
 
   const [wsStatus, setWsStatus] = useState<WebSocketStatus>({
     connected: false,
@@ -177,17 +180,13 @@ console.log('[PAGE] telemetry.data.length:', telemetry.data.length);
     lastUpdate: null,
   })
   const [isPlaying, setIsPlaying] = useState(false)
-  const [followTail, setFollowTail] = useState(true)
+
   const [playbackRate, setPlaybackRate] = useState("1")
   const [selectedSession, setSelectedSession] = useState("session-1")
   const [isMockMode, setIsMockMode] = useState(false)
 
   const [chartDomain, setChartDomain] = useState<ChartDomain | null>(null)
-  const [seriesVisibility, setSeriesVisibility] = useState<SeriesVisibility>({
-    speed: true,
-    current: true,
-    temp: true,
-  })
+
   const [isDragging, setIsDragging] = useState(false)
   const [dragStart, setDragStart] = useState<{ x: number; domain: ChartDomain } | null>(null)
 
@@ -211,7 +210,7 @@ console.log('[PAGE] telemetry.data.length:', telemetry.data.length);
     }
 
     const visibleData = data.filter((point) => {
-      return seriesVisibility.speed || seriesVisibility.current || seriesVisibility.temp
+      return series.speed || series.current || series.temp
     })
 
     if (visibleData.length === 0) {
@@ -228,6 +227,8 @@ console.log('[PAGE] telemetry.data.length:', telemetry.data.length);
       let sum = 0
       let max = values[0]
 
+
+
       for (let i = 0; i < values.length; i++) {
         const val = values[i]
         sum += val
@@ -242,13 +243,13 @@ console.log('[PAGE] telemetry.data.length:', telemetry.data.length);
     }
 
     return {
-      speed: seriesVisibility.speed ? calculateMetrics(visibleData.map((d) => d.speed)) : { avg: 0, max: 0, last: 0 },
-      current: seriesVisibility.current
+      speed: series.speed ? calculateMetrics(visibleData.map((d) => d.speed)) : { avg: 0, max: 0, last: 0 },
+      current: series.current
         ? calculateMetrics(visibleData.map((d) => d.current))
         : { avg: 0, max: 0, last: 0 },
-      temp: seriesVisibility.temp ? calculateMetrics(visibleData.map((d) => d.temp)) : { avg: 0, max: 0, last: 0 },
+      temp: series.temp ? calculateMetrics(visibleData.map((d) => d.temp)) : { avg: 0, max: 0, last: 0 },
     }
-  }, [data, seriesVisibility])
+  }, [data, series])
 
   const generateMockData = useCallback(() => {
     if (!isPlaying) return
@@ -434,24 +435,24 @@ console.log('[PAGE] telemetry.data.length:', telemetry.data.length);
   }, [connectWebSocket])
 
   const chartData = useMemo(() => {
-  console.log('[CHARTDATA] Recalculating, data:', telemetry.data.length, 'domain:', chartDomain);
+  console.log('[CHARTDATA] Recalculating, data:', data.length, 'domain:', chartDomain);
   
-  if (telemetry.data.length === 0) return [];
+  if (data.length === 0) return [];
   
   // If no domain set, return all data
   if (!chartDomain || isNaN(chartDomain.xMin) || isNaN(chartDomain.xMax)) {
-    return telemetry.data;
+    return data;
   }
   
   // Filter to visible range
-  return telemetry.data.filter(d => d.t >= chartDomain.xMin && d.t <= chartDomain.xMax);
-}, [telemetry.data, chartDomain]);
+  return data.filter(d => d.t >= chartDomain.xMin && d.t <= chartDomain.xMax);
+}, [data, chartDomain]);
 
   // Initialize chart domain when data first arrives
 useEffect(() => {
-  if (telemetry.data.length > 0) {
-    const minT = Math.min(...telemetry.data.map((d) => d.t))
-    const maxT = Math.max(...telemetry.data.map((d) => d.t))
+  if (data.length > 0) {
+    const minT = Math.min(...data.map((d) => d.t))
+    const maxT = Math.max(...data.map((d) => d.t))
 
     console.log('[INIT DOMAIN] minT:', minT, 'maxT:', maxT);
 
@@ -462,23 +463,26 @@ useEffect(() => {
       yMax: 100,
     })
   }
-}, [telemetry.data.length])
-
+}, [data.length])
 
   const handleWheel = useCallback(
     (e: React.WheelEvent) => {
-
-      if (telemetry.playing) {
-      console.log('[WHEEL] Cannot zoom while playing');
-      return;
+      console.log('WHEEL EVENT FIRED');
+    
+       if (playing) {
+        console.log('blocked - playing');
+        return;
     }
 
-      if (!chartDomain || telemetry.data.length === 0) {
+    e.preventDefault()
+    e.stopPropagation() 
+
+      if (!chartDomain || data.length === 0) {
         console.log('[WHEEL] EARLY RETURN - no domain or no data');
       return;
       }
 
-      //e.preventDefault()
+      e.preventDefault()
       setFollowTail(false)
 
       const rect = chartContainerRef.current?.getBoundingClientRect()
@@ -486,8 +490,8 @@ useEffect(() => {
       return;
     }
 
-      const minT = Math.min(...telemetry.data.map((d) => d.t))
-      const maxT = Math.max(...telemetry.data.map((d) => d.t))
+      const minT = Math.min(...data.map((d) => d.t))
+      const maxT = Math.max(...data.map((d) => d.t))
       const totalDataSpan = maxT - minT
 
       console.log('[WHEEL] minT:', minT, 'maxT:', maxT, 'span:', totalDataSpan);
@@ -551,7 +555,7 @@ if (newXMin >= newXMax || isNaN(newXMin) || isNaN(newXMax)) {
         xMax: newXMax,
       })
     },
-    [chartDomain, telemetry.data, telemetry],
+    [chartDomain, data, playing],
   )
   /**What happens:**
 - State updates with new boundaries
@@ -595,13 +599,41 @@ After zoom IN (showing 4 seconds):
       const span = dragStart.domain.xMax - dragStart.domain.xMin
       const deltaT = deltaX * span
 
+      const newXMin = dragStart.domain.xMin - deltaT
+      const newXMax = dragStart.domain.xMax - deltaT
+
+       // ADD YOUR BOUNDARY LOGIC HERE
+      // Define boundaries
+      
+
+      const minTime = 0
+      const maxTime = (data.length - 1) / hz
+
+      let clampedXMin = newXMin
+      let clampedXMax = newXMax
+
+      if (clampedXMin < minTime) {
+        const overflow = minTime - clampedXMin
+        clampedXMin = minTime
+        clampedXMax = clampedXMax + overflow
+      }
+
+      if (clampedXMax > maxTime){
+        const overflow = clampedXMax - maxTime
+        clampedXMax = maxTime
+        clampedXMin = clampedXMin - overflow
+
+      }
+console.log('maxTime:', maxTime)
+console.log('newXMax:', newXMax)
+console.log('clampedXMax:', clampedXMax)
       setChartDomain({
         ...dragStart.domain,
-        xMin: dragStart.domain.xMin - deltaT,
-        xMax: dragStart.domain.xMax - deltaT,
+        xMin: clampedXMin,
+        xMax: clampedXMax,
       })
     },
-    [isDragging, dragStart],
+    [isDragging, dragStart, data, hz],
   )
 
   const handleMouseUp = useCallback(() => {
@@ -622,14 +654,7 @@ After zoom IN (showing 4 seconds):
       yMax: 100,
     })
     setFollowTail(true)
-  }, [telemetry.data, telemetry])
-
-  const toggleSeries = useCallback((series: keyof SeriesVisibility) => {
-    setSeriesVisibility((prev) => ({
-      ...prev,
-      [series]: !prev[series],
-    }))
-  }, [])
+  }, [data])
 
   const CustomTooltip = useMemo(() => {
     return ({ active, payload, label }: any) => {
@@ -708,14 +733,15 @@ After zoom IN (showing 4 seconds):
   }
 
   const togglePlayback = () => {
-    if (telemetry.playing) {
-      telemetry.pause();
+    if (playing) {
+      pause();
     }else {
-      if (telemetry.data.length > 0){
-        telemetry.clear();
+      if (data.length > 0){
+        clear();
         setChartDomain(null);
       }
-      telemetry.play();
+      play();
+      setFollowTail(true);
     }
   }
 
@@ -723,9 +749,9 @@ After zoom IN (showing 4 seconds):
     const newValue = !followTail;
     setFollowTail(newValue);
 
-    if (newValue && telemetry.data.length > 0) {
-      const minT = Math.min(...telemetry.data.map((d) => d.t));
-      const maxT = Math.max(...telemetry.data.map((d) => d.t));
+    if (newValue && data.length > 0) {
+      const minT = Math.min(...data.map((d) => d.t));
+      const maxT = Math.max(...data.map((d) => d.t));
       setChartDomain({
         xMin: Math.max(minT, maxT - 30),
         xMax: maxT,
@@ -764,13 +790,13 @@ After zoom IN (showing 4 seconds):
     }
 
     return {
-      speed: seriesVisibility.speed ? calculateMetrics(chartData.map((d) => d.speed)) : { avg: 0, max: 0, last: 0 },
-      current: seriesVisibility.current
+      speed: series.speed ? calculateMetrics(chartData.map((d) => d.speed)) : { avg: 0, max: 0, last: 0 },
+      current: series.current
         ? calculateMetrics(chartData.map((d) => d.current))
         : { avg: 0, max: 0, last: 0 },
-      temp: seriesVisibility.temp ? calculateMetrics(chartData.map((d) => d.temp)) : { avg: 0, max: 0, last: 0 },
+      temp: series.temp ? calculateMetrics(chartData.map((d) => d.temp)) : { avg: 0, max: 0, last: 0 },
     }
-  }, [chartData, seriesVisibility])
+  }, [chartData, series])
 
   const exportToPNG = useCallback(async () => {
     if (!chartContainerRef.current) return
@@ -854,17 +880,17 @@ After zoom IN (showing 4 seconds):
 
     try {
       const headers = ["Time (s)"]
-      if (seriesVisibility.speed) headers.push("Speed (m/s)")
-      if (seriesVisibility.current) headers.push("Current (A)")
-      if (seriesVisibility.temp) headers.push("Temperature (°C)")
+      if (series.speed) headers.push("Speed (m/s)")
+      if (series.current) headers.push("Current (A)")
+      if (series.temp) headers.push("Temperature (°C)")
 
       const rows = [headers.join(",")]
 
       chartData.forEach((point) => {
         const row = [point.t.toFixed(3)]
-        if (seriesVisibility.speed) row.push(point.speed.toFixed(3))
-        if (seriesVisibility.current) row.push(point.current.toFixed(3))
-        if (seriesVisibility.temp) row.push(point.temp.toFixed(3))
+        if (series.speed) row.push(point.speed.toFixed(3))
+        if (series.current) row.push(point.current.toFixed(3))
+        if (series.temp) row.push(point.temp.toFixed(3))
         rows.push(row.join(","))
       })
 
@@ -874,7 +900,7 @@ After zoom IN (showing 4 seconds):
         `# Session: ${selectedSession}`,
         `# Data Points: ${chartData.length}`,
         `# Time Range: ${chartDomain?.xMin.toFixed(3)}s - ${chartDomain?.xMax.toFixed(3)}s`,
-        `# Visible Series: ${Object.entries(seriesVisibility)
+        `# Visible Series: ${Object.entries(series)
           .filter(([_, visible]) => visible)
           .map(([name]) => name)
           .join(", ")}`,
@@ -897,7 +923,7 @@ After zoom IN (showing 4 seconds):
     } catch (error) {
       console.error("[v0] Error exporting CSV:", error)
     }
-  }, [chartData, seriesVisibility, selectedSession, chartDomain])
+  }, [chartData, series, selectedSession, chartDomain])
 
   return (
     <div className="min-h-screen bg-background text-foreground p-4">
@@ -916,8 +942,8 @@ After zoom IN (showing 4 seconds):
                 </SelectContent>
               </Select>
 
-              <Button variant={telemetry.playing ? "default" : "outline"} size="sm" onClick={togglePlayback}>
-                {telemetry.playing ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+              <Button variant={playing ? "default" : "outline"} size="sm" onClick={togglePlayback}>
+                {playing ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
               </Button>
 
               <Button variant={followTail ? "default" : "outline"} size="sm" onClick={toggleFollowTail}>
@@ -960,7 +986,7 @@ After zoom IN (showing 4 seconds):
             metrics={memoizedKpiData.speed}
             unit="m/s"
             threshold={THRESHOLDS.speed}
-            enabled={seriesVisibility.speed}
+            enabled={series.speed}
           />
           <KPICard
             title="Current"
@@ -968,7 +994,7 @@ After zoom IN (showing 4 seconds):
             metrics={memoizedKpiData.current}
             unit="A"
             threshold={THRESHOLDS.current}
-            enabled={seriesVisibility.current}
+            enabled={series.current}
           />
           <KPICard
             title="Temperature"
@@ -976,7 +1002,7 @@ After zoom IN (showing 4 seconds):
             metrics={memoizedKpiData.temp}
             unit="°C"
             threshold={THRESHOLDS.temp}
-            enabled={seriesVisibility.temp}
+            enabled={series.temp}
           />
         </div>
 
@@ -985,25 +1011,25 @@ After zoom IN (showing 4 seconds):
             <div className="flex items-center gap-4 mb-4">
               <div className="text-sm font-medium">Series:</div>
               <Button
-                variant={seriesVisibility.speed ? "default" : "outline"}
+                variant={series.speed ? "default" : "outline"}
                 size="sm"
-                onClick={() => telemetry.toggleSeries("speed")}
+                onClick={() => toggleSeries("speed")}
                 className="h-6 px-2 text-xs"
               >
                 Speed
               </Button>
               <Button
-                variant={seriesVisibility.current ? "default" : "outline"}
+                variant={series.current ? "default" : "outline"}
                 size="sm"
-                onClick={() => telemetry.toggleSeries("current")}
+                onClick={() => toggleSeries("current")}
                 className="h-6 px-2 text-xs"
               >
                 Current
               </Button>
               <Button
-                variant={seriesVisibility.temp ? "default" : "outline"}
+                variant={series.temp ? "default" : "outline"}
                 size="sm"
-                onClick={() => telemetry.toggleSeries("temp")}
+                onClick={() => toggleSeries("temp")}
                 className="h-6 px-2 text-xs"
               >
                 Temperature
@@ -1013,6 +1039,7 @@ After zoom IN (showing 4 seconds):
             <div
               ref={chartContainerRef}
               className="h-80 cursor-crosshair select-none"
+              tabIndex={0} 
               onWheelCapture={handleWheel}
               onMouseDown={handleMouseDown}
               onMouseMove={handleMouseMove}
@@ -1041,7 +1068,7 @@ After zoom IN (showing 4 seconds):
                   <Tooltip content={<CustomTooltip />} />
                   <Legend />
 
-                  {telemetry.series.speed && (
+                  {series.speed && (
                     <Line
                      type="monotone"
     dataKey="speed"
@@ -1053,7 +1080,7 @@ After zoom IN (showing 4 seconds):
                     />
                   )}
 
-                  {telemetry.series.current && (
+                  {series.current && (
                     <Line
                       type="monotone"
     dataKey="current"
@@ -1065,7 +1092,7 @@ After zoom IN (showing 4 seconds):
                     />
                   )}
 
-                  {telemetry.series.temp && (
+                  {series.temp && (
                     <Line
                       type="monotone"
     dataKey="temp"
