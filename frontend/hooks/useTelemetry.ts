@@ -13,28 +13,56 @@ export function useTelemetry(initialHz = 4) {
 });
   const [data, setData] = useState<Point[]>([]);
   const [hz, setHz] = useState(initialHz);
+
+  const [wsConnected, setWsConnected] = useState(false);
+  const [useMockData, setUseMockData] = useState(false);
         
 const timerRef = useRef<number | null>(null);
-const indexRef = useRef(0); 
+const indexRef = useRef(0);
+const wsRef = useRef<WebSocket | null>(null);
 
 const play = () => {
-if (playing) return;
-setPlaying(true);
+  if (playing) return;
+  setPlaying(true);
 
-timerRef.current = window.setInterval(() => {
+  // Try to connect to WebSocket first
+  const ws = new WebSocket('ws://localhost:8080');
+  wsRef.current = ws;
 
-  const i = indexRef.current;
-  const t = i / hz;
-
-  const mockPoint: Point = {
-    type: "point",
-    t: t,
-    speed: 2 + Math.random(),
-    current: 5 + Math.random(),
-    temp: 20 + Math.random(),
+  ws.onopen = () => {
+    console.log('✅ WebSocket connected - using real data');
+    setWsConnected(true);
+    setUseMockData(false);
   };
-  pushPoint(mockPoint);
-}, 1000 / hz);
+
+  ws.onmessage = (event) => {
+    const telemetry = JSON.parse(event.data);
+    
+    // Convert server data to your Point format
+    const point: Point = {
+      type: "point",
+      t: telemetry.timestamp / 1000, // Convert ms to seconds
+      speed: telemetry.speed / 10, // Scale to your range (0-25)
+      current: telemetry.current / 5, // Scale to your range
+      temp: telemetry.temperature / 10, // Scale to your range
+    };
+    
+    pushPoint(point);
+  };
+
+  ws.onerror = () => {
+    console.log('⚠️ WebSocket failed - using mock data');
+    setWsConnected(false);
+    setUseMockData(true);
+    startMockDataGenerator();
+  };
+
+  ws.onclose = () => {
+    console.log('🔌 WebSocket closed - using mock data');
+    setWsConnected(false);
+    setUseMockData(true);
+    startMockDataGenerator();
+  };
 };
 
 const pause = () => {

@@ -434,19 +434,22 @@ console.log('[PAGE] data.length:', data.length);
     }
   }, [connectWebSocket])
 
-  const chartData = useMemo(() => {
-  console.log('[CHARTDATA] Recalculating, data:', data.length, 'domain:', chartDomain);
-  
-  if (data.length === 0) return [];
-  
-  // If no domain set, return all data
-  if (!chartDomain || isNaN(chartDomain.xMin) || isNaN(chartDomain.xMax)) {
-    return data;
-  }
-  
-  // Filter to visible range
-  return data.filter(d => d.t >= chartDomain.xMin && d.t <= chartDomain.xMax);
-}, [data, chartDomain]);
+const chartData = useMemo(() => {
+    console.log('[CHARTDATA] Recalculating, data:', data.length, 'domain:', chartDomain);
+    
+    if (data.length === 0) return [];
+    
+    // 1. First, define the visible range
+    let visibleData = data;
+    if (chartDomain && !isNaN(chartDomain.xMin) && !isNaN(chartDomain.xMax)) {
+       visibleData = data.filter(d => d.t >= chartDomain.xMin && d.t <= chartDomain.xMax);
+    }
+
+    // 2. Then, Apply the Numeric Algorithm (LTTB)
+    // If we have more than 1000 points, downsample them to keep rendering fast.
+    // This makes your resume bullet "Implemented numeric algorithms" 100% TRUE.
+    return downsampleLTTB(visibleData, 1000); 
+  }, [data, chartDomain]);
 
   // Initialize chart domain when data first arrives
 useEffect(() => {
